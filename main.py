@@ -1865,6 +1865,11 @@ def handle_callback(callback):
                 f"📝 پیام:\n{v['text']}", kb)
             return
 
+        answer_callback(callback_id)
+
+    except Exception as e:
+        print(f"⚠️ خطا callback: {e}")
+
 # ─── پایان بخش ۱۰ ───
 # ═══════════════════════════════════════
 # 🚀 حلقه اصلی
