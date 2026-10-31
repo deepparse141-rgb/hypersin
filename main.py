@@ -7,7 +7,6 @@ from concurrent.futures import ThreadPoolExecutor
 # 🔧 تنظیمات
 # ═══════════════════════════════════════
 TOKEN = "11726691:ZnU_Q7ptFVV2xkBNaxlbaEpOTSyIn5DFU_o"
-
 BASE_URL = f"https://tapi.bale.ai/bot{TOKEN}"
 
 # 📢 کانال اصلی (سفارشات)
