@@ -150,7 +150,6 @@ def save_db(): save_db_async()
 
 db = load_db()
 
-
 # ═══════════════════════════════════════
 # 💰 توابع با Cache فوق سریع
 # ═══════════════════════════════════════
@@ -333,8 +332,6 @@ def must_join(user_id):
         keyboard)
     return False
 
-
-
 # ═══════════════════════════════════════
 # 🎮 کیبوردها
 # ═══════════════════════════════════════
@@ -414,7 +411,6 @@ def join_settings_keyboard():
 
 def cancel_keyboard():
     return {"keyboard": [[{"text": "🔙 بازگشت"}]], "resize_keyboard": True}
-
 
 # ═══════════════════════════════════════
 # 🎯 چالش دعوت
@@ -541,7 +537,6 @@ def forward_to_all_worker(owner_id, from_chat_id, message_id):
             try: send_message(owner_id, f"📊 پیشرفت: {i}/{total}")
             except: pass
     send_message(owner_id, f"🚀 **هدایت کامل شد!**\n\n✅ موفق: {sent}\n❌ ناموفق: {failed}\n📊 کل: {total}", owner_keyboard())
-
 
 # ═══════════════════════════════════════
 # 🛡️ چک تضمینی
@@ -794,12 +789,10 @@ def handle_message(message):
                                     add_coins(inviter_id, chal["reward"])
                                     send_message(int(inviter_id), f"🎉 **تبریک! چالش رو بردی!**\n\n👥 {chal['target']} دعوت انجام شد.\n💰 **{chal['reward']:,} سکه** به حسابت واریز شد!")
                                 
-                                # آپدیت پیام قبلی کاربر که تو چالشه (اختیاری)
                                 break
                         
                         # اگر تو چالش نبود، پاداش عادی دعوت رو بده
                         if not in_challenge:
-                            # اینجا سیستم دعوت عادی (همون بازی قبلی) اجرا میشه
                             for gid, game in db.get("active_games", {}).items():
                                 if game.get("status") == "active":
                                     if inviter_id in game.get("players", {}):
@@ -1161,6 +1154,8 @@ def handle_message(message):
                 msg += "─────────────────\n"
             send_message(chat_id, msg, owner_keyboard()); return
 
+    except Exception as e:
+        print(f"⚠️ خطا: {e}")
 
 # ═══════════════════════════════════════
 # 🔘 هندلر دکمه‌های شیشه‌ای (Callback)
@@ -1221,7 +1216,6 @@ def handle_callback(callback):
             save_db_async()
             answer_callback(callback_id, "✅ چالش قبول شد!", show_alert=True)
             
-            # ویرایش پیام قبلی و حذف دکمه‌ها
             try:
                 edit_message_text(chat_id, message["message_id"], 
                     f"✅ **شما چالش را قبول کردید!**\n\n"
@@ -1255,7 +1249,6 @@ def handle_callback(callback):
                     None)
             except: pass
             
-            # اطلاع به مالک
             try:
                 send_message(int(OWNER_ID), f"❌ کاربر `{user_id}` چالش #{cid} رو رد کرد.")
             except: pass
@@ -1660,8 +1653,6 @@ def handle_callback(callback):
     except Exception as e:
         print(f"⚠️ خطا callback: {e}")
 
-
-
 # ═══════════════════════════════════════
 # 🚀 حلقه اصلی
 # ═══════════════════════════════════════
@@ -1729,8 +1720,3 @@ if __name__ == "__main__":
     threading.Thread(target=check_admin_orders, daemon=True).start()
     threading.Thread(target=main, daemon=True).start()
     app.run(host="0.0.0.0", port=10000)
-
-
-# ═══════════════════════════════════════
-# ✅ تمام شد!
-# ═══════════════════════════════════════
