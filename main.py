@@ -731,10 +731,12 @@ def handle_message(message):
             save_db_async()
             return
 
+        # ═══ ۵. pending ═══
         pending = db["pending_orders"].get(user_id, {})
         pmem = db["pending_members"].get(user_id, {})
         pt = db["pending_transfer"].get(user_id, {})
 
+        # سین‌زن - فوروارد
         if pending.get("step") == "waiting_forward":
             if "forward_from_chat" in message and message["forward_from_chat"]["type"] == "channel":
                 db["pending_orders"][user_id] = {"step": "waiting_count", "message_id": message["message_id"]}
@@ -744,6 +746,7 @@ def handle_message(message):
                 send_message(chat_id, "❌ **این پیام از کانال نیست!**\n\n⚠️ حتماً باید از کانال فوروارد شود!", cancel_keyboard())
             return
 
+        # سین‌زن - تعداد
         if pending.get("step") == "waiting_count":
             try:
                 count = int(convert_number(text))
@@ -777,6 +780,7 @@ def handle_message(message):
             except: send_message(chat_id, "❌ **عدد معتبر وارد کن!**", cancel_keyboard())
             return
 
+        # کد هدیه
         if pending.get("step") == "waiting_gift_code":
             code = text.upper().strip()
             if code in db["gift_codes"]:
@@ -794,6 +798,7 @@ def handle_message(message):
             del db["pending_orders"][user_id]; save_db_async()
             return
 
+        # عضوگیر - لینک (فقط کانال)
         if pmem.get("step") == "waiting_link":
             link = text.strip()
             if "ble.ir/" in link:
@@ -822,6 +827,7 @@ def handle_message(message):
             send_message(chat_id, "🔗 **لطفاً منو توی اون کانال ادمین کن!**\n\n✅ بعد بنویس: **ادمین کردم**", cancel_keyboard())
             return
 
+        # عضوگیر - ادمین
         if pmem.get("step") == "waiting_admin":
             if text.strip() == "ادمین کردم":
                 link = pmem["link"]
@@ -859,6 +865,7 @@ def handle_message(message):
             else: send_message(chat_id, "⚠️ **لطفاً دقیقاً بنویس: ادمین کردم**", cancel_keyboard())
             return
 
+        # عضوگیر - نوع
         if pmem.get("step") == "waiting_type":
             choice = text.strip()
             if choice in ["1", "2", "۱", "۲"]:
@@ -871,6 +878,7 @@ def handle_message(message):
             else: send_message(chat_id, "❌ **فقط عدد ۱ یا ۲ را وارد کنید!**", cancel_keyboard())
             return
 
+        # عضوگیر - تعداد
         if pmem.get("step") == "waiting_count":
             try:
                 count = int(convert_number(text))
@@ -1407,17 +1415,18 @@ def handle_callback(callback):
                 
                 # 🎯 ارسال پیام تایید به دعوت‌کننده
                 inviter_id = user.get("invited_by")
-                if inviter_id and inviter_id != user_id:
+                if inviter_id and inviter_id != user_id and not user.get("invite_reward_paid"):
                     try:
                         inviter = get_user(inviter_id)
-                        reward_amount = get_setting("invite_reward", INVITE_REWARD)
-                        add_coins(inviter_id, reward_amount)
-                        save_db_async()
                         send_message(int(inviter_id),
                             f"🎉 **کاربر عضو کانال هم شد!**\n\n"
                             f"👤 کاربر: {user.get('username') or user_id}\n"
-                            f"🎁 **{reward_amount} سکه بهت اهدا شد!** 💰\n"
+                            f"🎁 **{get_setting('invite_reward', INVITE_REWARD)} سکه بهت اهدا شد!** 💰\n"
                             f"💰 موجودی: {get_coins(inviter_id):,} سکه")
+                        add_coins(inviter_id, get_setting("invite_reward", INVITE_REWARD))
+                        inviter["invite_count"] = inviter.get("invite_count", 0) + 1
+                        user["invite_reward_paid"] = True
+                        save_db_async()
                     except: pass
             else:
                 answer_callback(callback_id, "❌ هنوز عضو نشدی!", show_alert=True)
