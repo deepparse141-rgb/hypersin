@@ -691,7 +691,6 @@ def handle_message(message):
 
         get_user(user_id)["msg_count"] = get_user(user_id).get("msg_count", 0) + 1
 
-        # 🛠️ اول دکمه‌ها رو چک می‌کنیم
         main_buttons = ["🪙 کسب سکه", "👁️ ثبت سفارش سین", "👥 ثبت سفارش عضو", "💰 سکه‌های من", "🎁 زدن کد هدیه", "👥 دعوت دوستان", "👤 حساب کاربری", "🎁 هدیه روزانه", "🎡 گردونه شانس", "💬 پشتیبانی", "📖 راهنما", "👑 پنل مالک", "🔙 بازگشت"]
         
         if text in main_buttons:
@@ -732,7 +731,7 @@ def handle_message(message):
             save_db_async()
             return
 
-        # ═══ ۵. pending (پردازش مراحل سفارش) ═══
+        # ═══ ۵. pending ═══
         pending = db["pending_orders"].get(user_id, {})
         pmem = db["pending_members"].get(user_id, {})
         pt = db["pending_transfer"].get(user_id, {})
@@ -909,6 +908,88 @@ def handle_message(message):
             except: send_message(chat_id, "❌ **عدد معتبر وارد کن!**", cancel_keyboard())
             return
 
+        if text.startswith("/start"):
+            parts = text.split(" ")
+            if len(parts) > 1:
+                inviter_id = parts[1]
+                if inviter_id != user_id:
+                    u = get_user(user_id)
+                    if not u.get("invited_by"):
+                        u["invited_by"] = inviter_id
+                        
+                        in_challenge = False
+                        for cid, chal in db.get("challenges", {}).items():
+                            if chal.get("user_id") == inviter_id and chal.get("status") == "active":
+                                chal["invites"] += 1
+                                in_challenge = True
+                                
+                                if chal["invites"] >= chal["target"]:
+                                    chal["status"] = "completed"
+                                    add_coins(inviter_id, chal["reward"])
+                                    send_message(int(inviter_id), f"🎉 **تبریک! چالش رو بردی!**\n\n👥 {chal['target']} دعوت انجام شد.\n💰 **{chal['reward']:,} سکه** به حسابت واریز شد!")
+                                break
+                        
+                        if not in_challenge:
+                            for gid, game in db.get("active_games", {}).items():
+                                if game.get("status") == "active":
+                                    if inviter_id in game.get("players", {}):
+                                        game["players"][inviter_id]["invites"] = game["players"][inviter_id].get("invites", 0) + 1
+                                        invites_count = game["players"][inviter_id]["invites"]
+                                        needed = game.get("needed", 10)
+                                        reward = game.get("reward", 500)
+
+                                        try:
+                                            send_message(int(inviter_id),
+                                                f"🎉 **یه دعوت جدید ثبت شد!**\n\n"
+                                                f"👥 تعداد دعوت‌های شما: {invites_count} از {needed}\n\n"
+                                                f"🏆 فقط {needed - invites_count} دعوت دیگه تا برنده شدن فاصله داری! ⚡")
+                                        except: pass
+
+                                        if invites_count >= needed:
+                                            game["status"] = "finished"
+                                            game["winner"] = inviter_id
+                                            add_coins(inviter_id, reward)
+                                            try:
+                                                send_message(CHANNEL_ID,
+                                                    f"🏆🏆🏆 **برنده مسابقه مشخص شد!** 🏆🏆🏆\n\n"
+                                                    f"🥇 کاربر **@{u.get('username') or inviter_id}** با {invites_count} دعوت، برنده شد!\n\n"
+                                                    f"💰 جایزه: **{reward} سکه**\n"
+                                                    f"✅ این مقدار به حسابش واریز شد.\n\n"
+                                                    f"━━━━━━━━━━━━━━━━\n"
+                                                    f"🎮 مسابقه به پایان رسید!")
+                                            except: pass
+
+                                            try:
+                                                send_message(int(inviter_id),
+                                                    f"🎉🎉🎉 **تبریک فراوان!** 🎉🎉🎉\n\n"
+                                                    f"🥇 **تو برنده مسابقه شدی!**\n\n"
+                                                    f"👥 تعداد کل دعوت‌ها: {invites_count}\n"
+                                                    f"💰 جایزه شما: **{reward} سکه**\n\n"
+                                                    f"💳 سکه‌ها به حساب کاربری شما اضافه شدند.")
+                                            except: pass
+                                        break
+
+                        try:
+                            send_message(int(inviter_id),
+                                f"🔔 **یه کاربر با لینک دعوت تو اومد!**\n\n"
+                                f"👤 کاربر: {name}\n"
+                                f"⏰ منتظر عضویت در کانال...")
+                        except: pass
+
+            if not check_all_joins(user_id):
+                must_join(user_id)
+                return
+
+            user = get_user(user_id)
+            if not user.get("got_start_gift"):
+                add_coins(user_id, get_setting("start_gift", START_GIFT))
+                user["got_start_gift"] = True
+                save_db_async()
+                send_message(chat_id, f"👋 **سلام {name} جان!** 😎\n\n⚡ به هایپرسین خوش اومدی!\n🎁 **{get_setting('start_gift', START_GIFT)} سکه هدیه** بهت اضافه شد!\n💰 موجودی: {get_coins(user_id):,} سکه", main_keyboard(user_id))
+            else:
+                send_message(chat_id, f"👋 **سلام {name} جان!** 😎\n\nاز دکمه‌های زیر استفاده کن:", main_keyboard(user_id))
+            return
+
         if text == OWNER_PASSWORD and user_id == str(OWNER_ID):
             send_message(chat_id, "👑 **پنل مالک باز شد!** 🚀", owner_keyboard())
             return
@@ -920,7 +1001,6 @@ def handle_message(message):
             send_message(chat_id, "👑 **پنل مالک** 🚀", owner_keyboard())
             return
 
-        # پردازش دکمه‌های اصلی
         if text == "🪙 کسب سکه":
             kb = {"inline_keyboard": [[{"text": "👁️ برو به کانال", "url": CHANNEL_LINK}]]}
             send_message(chat_id, f"🔗 **برو کانال و «دیدم» بزن!** 💰\n\n{CHANNEL_LINK}", kb)
