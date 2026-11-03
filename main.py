@@ -67,10 +67,10 @@ def load_db():
         if os.path.exists(DB_FILE):
             with open(DB_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                for key in ["guaranteed_times", "support_tickets", "join_channels", "group_targets", "bc_gifts", "coin_packets", "admin_warnings", "polls", "games", "active_games", "challenges"]:
+                for key in ["guaranteed_times", "support_tickets", "join_channels", "group_targets", "bc_gifts", "coin_packets", "admin_warnings", "polls", "games", "active_games", "challenges", "vip_users"]:
                     if key not in data:
                         data[key] = {}
-                for key in ["custom_features", "pending_challenge"]:
+                for key in ["custom_features", "pending_challenge", "pending_vip"]:
                     if key not in data:
                         data[key] = {}
                 if "settings" not in data:
@@ -106,6 +106,7 @@ def load_db():
         "guaranteed_times": {}, "group_targets": {}, "custom_features": [],
         "admin_warnings": {}, "polls": {}, "poll_counter": 0,
         "challenges": {}, "challenge_counter": 0, "pending_challenge": {},
+        "vip_users": {},
         "settings": {
             "seen_reward": 1, "sin_cost": 1,
             "member_cost": 5, "member_normal_reward": 3, "member_guaranteed_reward": 7,
@@ -181,6 +182,17 @@ def is_banned(user_id):
 
 def is_admin(user_id):
     return str(user_id) == str(OWNER_ID) or str(user_id) in db.get("admins", [])
+
+def is_vip(user_id):
+    uid = str(user_id)
+    if uid not in db.get("vip_users", {}): return False
+    expiry = db["vip_users"][uid].get("expiry")
+    if not expiry: return False
+    if datetime.now().timestamp() > expiry:
+        del db["vip_users"][uid]
+        save_db_async()
+        return False
+    return True
 
 def convert_number(text):
     for p, e in zip("۰۱۲۳۴۵۶۷۸۹", "0123456789"):
@@ -345,7 +357,8 @@ def owner_keyboard():
             [{"text": "📋 لیست کانال‌ها"}, {"text": "👥 کاربران کانال"}],
             [{"text": "📢 پیام همگانی"}, {"text": "🚀 هدایت همگانی"}],
             [{"text": "📢 پیام به گروه‌ها"}, {"text": "🏆 رتبه‌بندی"}],
-            [{"text": "💸 انتقال سکه"}, {"text": "🔙 بازگشت"}]
+            [{"text": "⭐ ویژه VIP"}, {"text": "💸 انتقال سکه"}],
+            [{"text": "🔙 بازگشت"}]
         ],
         "resize_keyboard": True
     }
@@ -511,7 +524,7 @@ def forward_to_all_worker(owner_id, from_chat_id, message_id):
 def check_guaranteed_members():
     while True:
         try:
-            time.sleep(300)
+            time.sleep(3)  # هر 3 ثانیه چک میکنه
             now = datetime.now()
             hours = get_setting("guaranteed_hours", 48)
             penalty = get_setting("guaranteed_penalty", 7)
@@ -729,183 +742,6 @@ def handle_message(message):
                 send_message(chat_id, "❌ **خطا در ارسال پیام!**\n\nمتاسفانه مشکلی پیش آمد، لطفاً لحظاتی دیگر دوباره تلاش کنید.", main_keyboard(user_id))
             db["pending_support"].pop(user_id, None)
             save_db_async()
-            return
-
-        # ═══ ۵. pending ═══
-        pending = db["pending_orders"].get(user_id, {})
-        pmem = db["pending_members"].get(user_id, {})
-        pt = db["pending_transfer"].get(user_id, {})
-
-        # سین‌زن - فوروارد
-        if pending.get("step") == "waiting_forward":
-            if "forward_from_chat" in message and message["forward_from_chat"]["type"] == "channel":
-                db["pending_orders"][user_id] = {"step": "waiting_count", "message_id": message["message_id"]}
-                save_db_async()
-                send_message(chat_id, f"🔢 **چند سین نیاز داری داداش؟**\n\n💰 هر سین = {get_setting('sin_cost', 1)} سکه\n💳 موجودی: {get_coins(user_id):,} سکه\n\n⚠️ حداقل: {get_setting('min_sin', 15)} سین\n\n📌 فقط یه عدد بفرست (فارسی یا انگلیسی)!", cancel_keyboard())
-            else:
-                send_message(chat_id, "❌ **این پیام از کانال نیست!**\n\n⚠️ حتماً باید از کانال فوروارد شود!", cancel_keyboard())
-            return
-
-        # سین‌زن - تعداد
-        if pending.get("step") == "waiting_count":
-            try:
-                count = int(convert_number(text))
-                min_sin = get_setting("min_sin", 15)
-                if count < min_sin:
-                    send_message(chat_id, f"❌ **حداقل باید {min_sin} سین ثبت کنی!**", cancel_keyboard()); return
-                coins = get_coins(user_id)
-                total_cost = count * get_setting('sin_cost', 1)
-                if coins < total_cost:
-                    send_message(chat_id, f"❌ **سکه کافی نداری!**\n💰 موجودی: {coins:,} | 💰 نیاز: {total_cost:,}", cancel_keyboard())
-                    del db["pending_orders"][user_id]; save_db_async(); return
-                remove_coins(user_id, total_cost)
-                fwd_result = forward_message(CHANNEL_ID, chat_id, pending["message_id"])
-                if fwd_result.get("ok"):
-                    fwd_msg_id = fwd_result["result"]["message_id"]
-                    db["order_counter"] = db.get("order_counter", 0) + 1
-                    onum = db["order_counter"]
-                    oid = str(int(time.time() * 1000))
-                    db["orders"][oid] = {"user_id": user_id, "count": count, "message_id": fwd_msg_id, "reply_message_id": None, "seen_count": 0, "status": "active", "order_number": onum}
-                    db["seen_records"][oid] = []
-                    db["stats"]["total_orders"] += 1
-                    kb = {"inline_keyboard": [[{"text": "👁️ دیدم", "callback_data": f"seen_{oid}"}, {"text": "🤖 مشاهده ربات", "url": BOT_LINK}], [{"text": "🚨 گزارش", "callback_data": f"report_{oid}"}]]}
-                    rr = send_reply(CHANNEL_ID, fwd_msg_id, f"📋 **سفارش سین**\n\n👤 سین درخواستی: {count}\n👁️ سین خورده: 0\n#{onum}", kb)
-                    if rr.get("ok"): db["orders"][oid]["reply_message_id"] = rr["result"]["message_id"]
-                    del db["pending_orders"][user_id]; save_db_async()
-                    send_message(chat_id, f"✅ **سفارش با موفقیت ثبت شد!** 🎉\n\n🔢 تعداد سین: {count}\n💰 هزینه: {total_cost} سکه\n💳 موجودی جدید: {get_coins(user_id):,} سکه\n📝 شماره سفارش: #{onum}", main_keyboard(user_id))
-                else:
-                    add_coins(user_id, total_cost)
-                    send_message(chat_id, "❌ **خطا در ثبت سفارش!**", main_keyboard(user_id))
-                    del db["pending_orders"][user_id]; save_db_async()
-            except: send_message(chat_id, "❌ **عدد معتبر وارد کن!**", cancel_keyboard())
-            return
-
-        # کد هدیه
-        if pending.get("step") == "waiting_gift_code":
-            code = text.upper().strip()
-            if code in db["gift_codes"]:
-                g = db["gift_codes"][code]; u = get_user(user_id)
-                if code in u.get("used_gift_codes", []):
-                    send_message(chat_id, "❌ **شما قبلاً این کد را استفاده کرده‌اید!**", main_keyboard(user_id))
-                elif len(g["used_by"]) >= g["capacity"]:
-                    send_message(chat_id, "❌ **ظرفیت این کد هدیه تکمیل شده است!**", main_keyboard(user_id))
-                else:
-                    add_coins(user_id, g["coins"])
-                    g["used_by"].append(user_id)
-                    u.setdefault("used_gift_codes", []).append(code); save_db_async()
-                    send_message(chat_id, f"🎉 **تبریک! {g['coins']:,} سکه!**\n💳 موجودی: {get_coins(user_id):,} سکه", main_keyboard(user_id))
-            else: send_message(chat_id, "❌ **کد هدیه نامعتبر است!**", main_keyboard(user_id))
-            del db["pending_orders"][user_id]; save_db_async()
-            return
-
-        # عضوگیر - لینک (فقط کانال)
-        if pmem.get("step") == "waiting_link":
-            link = text.strip()
-            if "ble.ir/" in link:
-                cu = "@" + link.split("ble.ir/")[-1]
-            elif link.startswith("@"):
-                cu = link
-            else:
-                send_message(chat_id, "❌ **لینک نامعتبر است!**", cancel_keyboard())
-                return
-
-            ci = get_chat(cu)
-            if ci.get("ok"):
-                chat_type_2 = ci["result"].get("type", "")
-                if chat_type_2 in ["group", "supergroup"]:
-                    send_message(chat_id, "❌ **گروه قبول نمیشه!**\n\n📩 لطفاً فقط **لینک کانال** بفرست.", cancel_keyboard())
-                    return
-                if chat_type_2 != "channel":
-                    send_message(chat_id, "❌ **فقط کانال قبول میشه!**", cancel_keyboard())
-                    return
-            else:
-                send_message(chat_id, "❌ **لینک نامعتبره!**", cancel_keyboard())
-                return
-
-            db["pending_members"][user_id] = {"step": "waiting_admin", "link": link, "chat_username": cu}
-            save_db_async()
-            send_message(chat_id, "🔗 **لطفاً منو توی اون کانال ادمین کن!**\n\n✅ بعد بنویس: **ادمین کردم**", cancel_keyboard())
-            return
-
-        # عضوگیر - ادمین
-        if pmem.get("step") == "waiting_admin":
-            if text.strip() == "ادمین کردم":
-                link = pmem["link"]
-                cu = pmem.get("chat_username", "")
-                try:
-                    ci = get_chat(cu)
-                    if ci.get("ok"):
-                        tcid = ci["result"]["id"]
-                        chat_type_2 = ci["result"].get("type", "channel")
-                        if chat_type_2 in ["group", "supergroup"]:
-                            send_message(chat_id, "❌ **گروه قبول نمیشه!**", cancel_keyboard())
-                            return
-                        ms = get_chat_member(tcid, int(TOKEN.split(":")[0]))
-                        if ms.get("ok") and ms["result"]["status"] in ["administrator", "creator"]:
-                            db["pending_members"][user_id] = {"step": "waiting_type", "link": link, "chat_id": tcid, "chat_type": "channel"}
-                            save_db_async()
-                            send_message(chat_id, "📥 **لطفاً نوع عضویت را انتخاب کنید:**\n\n"
-                                f"━━━━━━━━━━━━━━━━\n"
-                                f"🥉 **۱. نوع معمولی**\n"
-                                f"💰 هزینه هر عضو: {get_setting('member_cost', 5)} سکه\n"
-                                f"👤 کاربر میتونه هر وقت ترک کنه\n"
-                                f"⭐ بستگی به جذابیت کانالت داره\n"
-                                f"━━━━━━━━━━━━━━━━\n"
-                                f"🥇 **۲. نوع تضمینی**\n"
-                                f"💰 هزینه هر عضو: {get_setting('guaranteed_cost', 10)} سکه\n"
-                                f"🛡️ کاربر ۴۸ ساعت بمونه\n"
-                                f"❌ اگه زودتر ترک کنه\n"
-                                f"→ کاربر جریمه میشه\n"
-                                f"→ سکه به شما برگشت\n"
-                                f"━━━━━━━━━━━━━━━━\n\n"
-                                f"🔢 لطفاً عدد ۱ یا ۲ را وارد کنید:", cancel_keyboard())
-                        else: send_message(chat_id, "❌ **هنوز ادمین نشدم!**", cancel_keyboard())
-                    else: send_message(chat_id, "❌ **لینک نامعتبره!**", cancel_keyboard())
-                except: send_message(chat_id, "❌ **خطا!**", cancel_keyboard())
-            else: send_message(chat_id, "⚠️ **لطفاً دقیقاً بنویس: ادمین کردم**", cancel_keyboard())
-            return
-
-        # عضوگیر - نوع
-        if pmem.get("step") == "waiting_type":
-            choice = text.strip()
-            if choice in ["1", "2", "۱", "۲"]:
-                order_type = "normal" if choice in ["1", "۱"] else "guaranteed"
-                db["pending_members"][user_id]["order_type"] = order_type
-                db["pending_members"][user_id]["step"] = "waiting_count"; save_db_async()
-                cost_per = get_setting('member_cost', 5) if order_type == "normal" else get_setting('guaranteed_cost', 10)
-                tname = "معمولی" if order_type == "normal" else "تضمینی"
-                send_message(chat_id, f"📥 **ثبت سفارش عضو - {tname}**\n\n👥 تعداد عضو موردنیاز را وارد کن داداش\n💰 هزینه هر عضو: {cost_per} سکه\n📌 حداقل سفارش: {get_setting('min_member', 3)} عضو\n\n⌨️ لطفاً فقط عدد بفرست!", cancel_keyboard())
-            else: send_message(chat_id, "❌ **فقط عدد ۱ یا ۲ را وارد کنید!**", cancel_keyboard())
-            return
-
-        # عضوگیر - تعداد
-        if pmem.get("step") == "waiting_count":
-            try:
-                count = int(convert_number(text))
-                min_member = get_setting("min_member", 3)
-                if count < min_member:
-                    send_message(chat_id, f"❌ **حداقل باید {min_member} عضو سفارش بدی داداش!**", cancel_keyboard()); return
-                link = pmem["link"]; tcid = pmem["chat_id"]; otype = pmem.get("order_type", "normal")
-                cost_per = get_setting('member_cost', 5) if otype == "normal" else get_setting('guaranteed_cost', 10)
-                total_cost = count * cost_per
-                coins = get_coins(user_id)
-                if coins < total_cost:
-                    send_message(chat_id, f"❌ **سکه کافی نداری!**\n💰 موجودی: {coins:,} | 💰 نیاز: {total_cost:,}", cancel_keyboard())
-                    del db["pending_members"][user_id]; save_db_async(); return
-                remove_coins(user_id, total_cost)
-                db["member_counter"] = db.get("member_counter", 0) + 1
-                mnum = db["member_counter"]; mid = str(int(time.time() * 1000))
-                reward = get_setting('member_normal_reward', 3) if otype == "normal" else get_setting('member_guaranteed_reward', 7)
-                tname = "معمولی" if otype == "normal" else "تضمینی"
-                db["member_orders"][mid] = {"user_id": user_id, "count": count, "link": link, "chat_id": tcid, "message_id": None, "seen_count": 0, "status": "active", "order_number": mnum, "order_type": otype, "reward": reward, "chat_type": "channel"}
-                db["member_records"][mid] = []
-                db["stats"]["total_members"] = db["stats"].get("total_members", 0) + 1
-                kb = {"inline_keyboard": [[{"text": f"🪙 {reward} سکه میگیری!", "callback_data": f"info_{mid}"}], [{"text": "🔗 عضویت در کانال", "url": link}, {"text": "✅ عضو شدم", "callback_data": f"mjoin_{mid}"}], [{"text": "🚨 گزارش", "callback_data": f"mreport_{mid}"}, {"text": "🤖 ربات", "url": BOT_LINK}]]}
-                sent = send_message(CHANNEL_ID, f"📋 **سفارش عضو - {tname}**\n\n🔗 لینک کانال: {link}\n👥 تعداد درخواستی: {count}\n✅ تعداد عضو شده: 0\n#{mnum}\n\n🪙 **{reward} سکه میگیری!**", kb)
-                if sent.get("ok"): db["member_orders"][mid]["message_id"] = sent["result"]["message_id"]
-                del db["pending_members"][user_id]; save_db_async()
-                send_message(chat_id, f"🎉 **سفارش ثبت شد!**\n💰 موجودی جدید: {get_coins(user_id):,} سکه", main_keyboard(user_id))
-            except: send_message(chat_id, "❌ **عدد معتبر وارد کن!**", cancel_keyboard())
             return
 
         if text.startswith("/start"):
@@ -1385,6 +1221,51 @@ def handle_message(message):
                 msg += "─────────────────\n"
             send_message(chat_id, msg, owner_keyboard()); return
 
+        # --- VIP ---
+        if text == "⭐ ویژه VIP" and is_admin(user_id):
+            db["pending_vip"][user_id] = {"step": "waiting_id"}
+            save_db_async()
+            send_message(chat_id, "⭐ **ویژه VIP**\n\nلطفاً آیدی عددی کاربر را وارد کنید:", cancel_keyboard())
+            return
+            
+        pvip = db["pending_vip"].get(user_id, {})
+        if pvip.get("step") == "waiting_id":
+            target_id = text.strip()
+            db["pending_vip"][user_id] = {"step": "waiting_time", "target": target_id}
+            save_db_async()
+            send_message(chat_id, "⏰ لطفاً زمان را به **ثانیه** وارد کنید (مثلاً 86400 برای ۱ روز):", cancel_keyboard())
+            return
+            
+        if pvip.get("step") == "waiting_time":
+            try:
+                seconds = int(convert_number(text))
+                target = pvip["target"]
+                expiry = datetime.now().timestamp() + seconds
+                db["vip_users"][target] = {"expiry": expiry}
+                save_db_async()
+                
+                # ساخت کد فعال سازی
+                code = "VIP-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
+                db["pending_orders"][target] = {"step": "waiting_vip_code", "code": code}
+                save_db_async()
+                
+                send_message(chat_id, f"✅ **کاربر {target} VIP شد!**\n\n🔑 **کد فعال‌سازی:** `{code}`\n\nاین کد را به کاربر بدهید تا با ارسال آن، VIP شود.", owner_keyboard())
+                del db["pending_vip"][user_id]
+            except:
+                send_message(chat_id, "❌ **عدد معتبر وارد کن!**", cancel_keyboard())
+            return
+
+        # بررسی کد VIP
+        if pending.get("step") == "waiting_vip_code":
+            if text == pending.get("code"):
+                add_coins(user_id, 1000)  # هدیه VIP
+                send_message(chat_id, f"🎉 **تبریک! شما VIP شدید!**\n\n💰 ۱۰۰۰ سکه هدیه به شما داده شد.\n⏰ زمان پایان: {datetime.fromtimestamp(db['vip_users'][user_id]['expiry']).strftime('%Y-%m-%d %H:%M')}", main_keyboard(user_id))
+                del db["pending_orders"][user_id]
+                save_db_async()
+            else:
+                send_message(chat_id, "❌ کد نامعتبر است!", main_keyboard(user_id))
+            return
+
     except Exception as e:
         print(f"⚠️ خطا: {e}")
 
@@ -1413,7 +1294,6 @@ def handle_callback(callback):
                     answer_callback(callback_id, "✅ عضو شدی!")
                     send_message(user_id, "✅ **حالا استفاده کن!**", main_keyboard(user_id))
                 
-                # 🎯 ارسال پیام تایید به دعوت‌کننده
                 inviter_id = user.get("invited_by")
                 if inviter_id and inviter_id != user_id and not user.get("invite_reward_paid"):
                     try:
